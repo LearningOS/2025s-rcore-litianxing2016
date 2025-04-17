@@ -1,5 +1,7 @@
 //! Process management syscalls
 use crate::task::{change_program_brk, exit_current_and_run_next, suspend_current_and_run_next};
+use crate::task::current_user_token;
+use crate::mm::PageTable;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -27,7 +29,26 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    if _ts.is_null() {
+        return -1;
+    }
+    
+    let time_ms = crate::timer::get_time_ms();
+    let ts = TimeVal {
+        sec: time_ms / 1000,
+        usec: (time_ms % 1000) * 1000,
+    };
+
+    let token = current_user_token();
+    let mut page_table = PageTable::from_token(token);
+
+    match unsafe { page_table.translate_refmut(_ts)} {
+        Some(ts_ref) => {
+            *ts_ref = ts;
+            0
+        },
+        None => -1,
+    }
 }
 
 /// TODO: Finish sys_trace to pass testcases
