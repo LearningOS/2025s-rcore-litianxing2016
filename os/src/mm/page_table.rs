@@ -72,6 +72,10 @@ impl PageTableEntry {
     pub fn executable(&self) -> bool {
         (self.flags() & PTEFlags::X) != PTEFlags::empty()
     }
+    /// The page pointered by page table entry is user?
+    pub fn user(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
+    }
 }
 
 /// page table structure
@@ -172,6 +176,21 @@ impl PageTable {
         let paddr = PhysAddr::from(pte.ppn().0 << PAGE_SIZE_BITS | offset);
 
         Some(paddr.get_mut())
+    }
+
+    /// Translate a virtual address to a physical address
+    pub unsafe fn translate_ref<T>(&self, ptr: *const T) -> Option<&'static T> {
+        let vaddr = VirtAddr::from(ptr as usize);
+        let vpn = vaddr.floor();
+
+        let pte = self.translate(vpn)?;
+        if !pte.is_valid() || !pte.readable() || !pte.user() {
+            return None;
+        }
+
+        let paddr = PhysAddr::from(pte.ppn().0 << PAGE_SIZE_BITS | vaddr.page_offset());
+
+        Some(paddr.get_ref())
     }
 }
 

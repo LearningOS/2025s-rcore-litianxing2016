@@ -17,6 +17,7 @@ mod task;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use crate::config::MAX_SYSCALL_NUM;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -153,6 +154,20 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Add syscall times to current task's syscall_times array.
+    fn add_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    /// Get the current task's syscall_times array.
+    fn get_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +216,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Add syscall times to current task.
+pub fn add_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.add_syscall_times(syscall_id);
+}
+
+/// Get syscall times of current task.
+pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_syscall_times()
 }

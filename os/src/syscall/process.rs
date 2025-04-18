@@ -2,7 +2,7 @@
 use crate::task::{change_program_brk, exit_current_and_run_next, suspend_current_and_run_next};
 use crate::task::current_user_token;
 use crate::mm::PageTable;
-
+use crate::task::get_syscall_times;
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
@@ -55,7 +55,40 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     trace!("kernel: sys_trace");
-    -1
+    let token = current_user_token();
+    let mut page_table = PageTable::from_token(token);
+
+    let addr = _id as *mut u8;
+    if addr.is_null() {
+        return -1;
+    }
+    match _trace_request {
+        0 => {
+            // Read byte from current task's memory
+            unsafe { 
+                match page_table.translate_ref(addr) {
+                    Some(byte_ref) => *byte_ref as isize,
+                    None => -1,
+                }
+            }
+        }
+        1 => {
+            // Write byte to current task's memory
+            unsafe {
+                match page_table.translate_refmut(addr) {
+                    Some(byte_ref) => *byte_ref = _data as u8,
+                    None => return -1,
+                }
+            }
+            0
+        }
+        2 => {
+            // Get syscall count for given syscall id
+            let counts = get_syscall_times();
+            counts[_id as usize] as isize
+        }
+        _ => -1,
+    }
 }
 
 // YOUR JOB: Implement mmap.
