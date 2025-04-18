@@ -24,6 +24,8 @@ use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
+use crate::mm::VirtAddr;
+use crate::mm::MapPermission;
 
 /// The task manager, where all the tasks are managed.
 ///
@@ -168,6 +170,37 @@ impl TaskManager {
         let current = inner.current_task;
         inner.tasks[current].syscall_times
     }
+
+    /// Mmap the current task's memory.
+    fn mmap_current(&self, start_va: VirtAddr, end_va: VirtAddr,
+        permission: MapPermission) -> Option<isize> {
+            let start_vpn = start_va.floor();
+            let end_vpn = end_va.ceil();
+            let real_start_va: VirtAddr = start_vpn.into();
+            let real_end_va: VirtAddr = end_vpn.into();
+            let mut inner = self.inner.exclusive_access();
+            let current = inner.current_task;
+        if inner.tasks[current].memory_set.contains_vpn(start_vpn, end_vpn) {
+            return None;
+        }
+        inner.tasks[current].memory_set.insert_framed_area(
+            real_start_va, real_end_va, permission
+        );
+        Some((real_end_va.0 - real_start_va.0) as isize)
+    }
+
+    /// Munmap the current task's memory.
+    fn munmap_current(&self, start_va: VirtAddr, end_va: VirtAddr) -> Option<isize> {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if let Some(vpn_len) = inner.tasks[current].memory_set.remove_framed_area(start_vpn, end_vpn) {
+            Some(vpn_len << 12)
+        } else {
+            None
+        }
+    }
 }
 
 /// Run the first task in task list.
@@ -226,4 +259,19 @@ pub fn add_syscall_times(syscall_id: usize) {
 /// Get syscall times of current task.
 pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
     TASK_MANAGER.get_syscall_times()
+}
+
+/// Mmap the current task's memory.
+pub fn mmap_current_task(start: usize, end: usize, port: usize) -> Option<isize> {
+    let mut perm: MapPermission = MapPermission::from_bits(0).unwrap();
+    if port & 0x1 != 0 { perm.set(MapPermission::R, true); }
+    if port & 0x2 != 0 { perm.set(MapPermission::W, true); }
+    if port & 0x4 != 0 { perm.set(MapPermission::X, true); }
+    perm.set(MapPermission::U, true);
+    TASK_MANAGER.mmap_current(VirtAddr::from(start), VirtAddr::from(end), perm)
+}
+
+/// Munmap the current task's memory.
+pub fn munmap_current_task(start: usize, end: usize) -> Option<isize> {
+    TASK_MANAGER.munmap_current(VirtAddr::from(start), VirtAddr::from(end))
 }

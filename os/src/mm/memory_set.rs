@@ -63,6 +63,25 @@ impl MemorySet {
             None,
         );
     }
+    /// Assume that no conflicts.
+    pub fn remove_framed_area(&mut self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> Option<isize> {
+        let mut idx = 0;
+        for map_area in &mut self.areas {
+            if start_vpn == map_area.vpn_range.get_start() && end_vpn == map_area.vpn_range.get_end() {
+                for vpn in start_vpn.0..end_vpn.0 {
+                    map_area.unmap_one(&mut self.page_table, VirtPageNum::from(vpn));
+                }
+                break;
+            }
+            idx += 1;
+        }
+        if idx != self.areas.len() {
+            self.areas.remove(idx);
+            Some((end_vpn.0 - start_vpn.0) as isize)
+        } else {
+            None
+        }
+    }
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -262,6 +281,16 @@ impl MemorySet {
             false
         }
     }
+
+    /// check if the virtual address is in the memory set
+    #[allow(unused)]
+    pub fn contains_vpn(&self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> bool {
+        let mut contains = 0;
+        for area in &self.areas {
+            contains |= area.contains(start_vpn, end_vpn);
+        }
+        contains != 0
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
@@ -286,6 +315,10 @@ impl MapArea {
             map_type,
             map_perm,
         }
+    }
+    pub fn contains(&self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) -> i32 {
+        if start_vpn >= self.vpn_range.get_end()
+            || end_vpn <= self.vpn_range.get_start() { 0 } else { 1 }
     }
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;

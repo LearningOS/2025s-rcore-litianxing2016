@@ -3,6 +3,8 @@ use crate::task::{change_program_brk, exit_current_and_run_next, suspend_current
 use crate::task::current_user_token;
 use crate::mm::PageTable;
 use crate::task::get_syscall_times;
+
+use crate::task::{mmap_current_task, munmap_current_task};
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
@@ -94,13 +96,33 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+    if _port & 0x7 == 0 { return -1; } // pte
+    if _port & 0x8 != 0 { return -1; } // port[3] must be 0
+    if _start & 0xfff != 0 { return -1; } // 4096 的整数倍
+    // if let Some(length) = mmap_current_task(_start, _start + _len, _port) {
+    //     length
+    // } else {
+    //     -1
+    // }
+    match mmap_current_task(_start, _start + _len, _port) {
+        Some(_length) => 0,
+        None => -1,
+    }
 }
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+    if _start & 0xfff != 0 { return -1; } // 4096 的整数倍
+    // if let Some(length) = munmap_current_task(_start, _start + _len) {
+    //     length
+    // } else {
+    //     -1
+    // }
+    match munmap_current_task(_start, _start + _len) {
+        Some(_length) => 0,
+        None => -1,
+    }
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
