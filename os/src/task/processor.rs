@@ -7,6 +7,7 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
@@ -43,6 +44,37 @@ impl Processor {
     ///Get current task in cloning semanteme
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
+    }
+
+    /// Mmap the current task's memory.
+    fn mmap_current(&self, start_va: VirtAddr, end_va: VirtAddr,
+                permission: MapPermission) -> Option<isize> {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let real_start_va: VirtAddr = start_vpn.into();
+        let real_end_va: VirtAddr = end_va.into();
+        let task = self.current().unwrap();
+        let mut task_inner = task.inner_exclusive_access();
+        if task_inner.memory_set.contains_vpn(start_vpn, end_vpn) {
+            return None;
+        }
+        task_inner.memory_set.insert_framed_area(
+            real_start_va, real_end_va, permission
+        );
+        Some((real_end_va.0 - real_start_va.0) as isize)
+    }
+
+    /// Munmap the current task's memory.
+    fn munmap_current(&self, start_va: VirtAddr, end_va: VirtAddr) -> Option<isize> {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let task = self.current().unwrap();
+        let mut task_inner = task.inner_exclusive_access();
+        if let Some(vpn_len) = task_inner.memory_set.remove_framed_area(start_vpn, end_vpn) {
+            Some(vpn_len << 12)
+        } else {
+            None
+        }
     }
 }
 
@@ -108,4 +140,19 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Mmap the current task's memory.
+pub fn mmap_current_task(start: usize, end: usize, port: usize) -> Option<isize> {
+    let mut perm: MapPermission = MapPermission::from_bits(0).unwrap();
+    if port & 0x1 != 0 { perm.set(MapPermission::R, true); }
+    if port & 0x2 != 0 { perm.set(MapPermission::W, true); }
+    if port & 0x4 != 0 { perm.set(MapPermission::X, true); }
+    perm.set(MapPermission::U, true);
+    PROCESSOR.exclusive_access().mmap_current(VirtAddr::from(start), VirtAddr::from(end), perm)
+}
+
+/// Munmap the current task's memory.
+pub fn munmap_current_task(start: usize, end: usize) -> Option<isize> {
+    PROCESSOR.exclusive_access().munmap_current(VirtAddr::from(start), VirtAddr::from(end))
 }
