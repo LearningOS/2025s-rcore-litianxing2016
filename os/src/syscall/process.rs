@@ -8,7 +8,7 @@ use crate::{
     mm::{translated_refmut, translated_str},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next,
+        suspend_current_and_run_next, mmap_current_task, munmap_current_task,
     },
 };
 
@@ -134,7 +134,14 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _port & 0x7 == 0 { return -1; } // pte
+    if _port & 0x8 != 0 { return -1; } // port[3] must be 0
+    if _start & 0xfff != 0 { return -1; } // 4096 的整数倍
+
+    match mmap_current_task(_start, _start + _len, _port) {
+        Some(_length) => 0,
+        None => -1,
+    }
 }
 
 /// YOUR JOB: Implement munmap.
@@ -143,7 +150,12 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _start & 0xfff != 0 { return -1; } // 4096 的整数倍
+
+    match munmap_current_task(_start, _start + _len) {
+        Some(_length) => 0,
+        None => -1,
+    }
 }
 
 /// change data segment size
