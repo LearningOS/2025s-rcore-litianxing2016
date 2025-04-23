@@ -156,3 +156,9 @@ pub fn mmap_current_task(start: usize, end: usize, port: usize) -> Option<isize>
 pub fn munmap_current_task(start: usize, end: usize) -> Option<isize> {
     PROCESSOR.exclusive_access().munmap_current(VirtAddr::from(start), VirtAddr::from(end))
 }
+
+/// Set the current task's priority.
+pub fn set_current_priority(pri: usize) {
+    let task = current_task().unwrap();
+    task.inner_exclusive_access().set_priority(pri);
+}
