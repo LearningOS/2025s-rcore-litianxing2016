@@ -2,6 +2,7 @@
 //!
 use alloc::sync::Arc;
 
+use crate::mm::PageTable;
 use crate::{
     fs::{open_file, OpenFlags},
     mm::{translated_refmut, translated_str},
@@ -110,7 +111,21 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let time_ms = crate::timer::get_time_ms();
+    let ts = TimeVal {
+        sec: time_ms / 1000,
+        usec: (time_ms % 1000) * 1000,
+    };
+
+    let mut page_table = PageTable::from_token(current_user_token());
+
+    match unsafe { page_table.translate_refmut(_ts)} {
+        Some(ts_ref) => {
+            *ts_ref = ts;
+            0
+        },
+        None => -1,
+    }
 }
 
 /// YOUR JOB: Implement mmap.

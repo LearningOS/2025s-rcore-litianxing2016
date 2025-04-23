@@ -1,5 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use crate::config::PAGE_SIZE_BITS;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -155,6 +156,21 @@ impl PageTable {
     /// get the token from the page table
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
+    }
+    /// Translate a virtual address to a physical address
+    pub unsafe fn translate_refmut<T>(&mut self, ptr: *mut T) -> Option<&'static mut T> {
+        let vaddr = VirtAddr::from(ptr as usize);
+        let vpn = vaddr.floor();
+
+        let pte = self.translate(vpn)?;
+        if !pte.is_valid() || !pte.writable() {
+            return None;
+        }
+
+        let offset = vaddr.page_offset();
+        let paddr = PhysAddr::from(pte.ppn().0 << PAGE_SIZE_BITS | offset);
+
+        Some(paddr.get_mut())
     }
 }
 
