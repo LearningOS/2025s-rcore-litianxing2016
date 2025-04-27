@@ -183,10 +183,9 @@ pub fn sys_spawn(_path: *const u8) -> isize {
     let _path = translated_str(token, _path);
     let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
     trap_cx.x[10] = 0;
-    if let Some(data) = get_app_data_by_name(_path.as_str()) {
-        new_task.exec(data);
-        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
-        trap_cx.x[10] = 0;
+    if let Some(app_inode) = open_file(_path.as_str(), OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
+        new_task.exec(all_data.as_slice());
         add_task(new_task);
         new_pid as isize
     } else {

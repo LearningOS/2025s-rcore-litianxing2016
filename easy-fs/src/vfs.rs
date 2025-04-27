@@ -30,7 +30,7 @@ impl Inode {
         }
     }
     /// Call a function over a disk inode to read it
-    fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
+    pub fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
         get_block_cache(self.block_id, Arc::clone(&self.block_device))
             .lock()
             .read(self.block_offset, f)
@@ -71,6 +71,12 @@ impl Inode {
                     self.block_device.clone(),
                 ))
             })
+        })
+    }
+    /// Get the inode id of a given name under current inode
+    pub fn get_inode_id(&self, name: &str) -> Option<u32> {
+        self.read_disk_inode(|disk_inode| {
+            self.find_inode_id(name, disk_inode)
         })
     }
     /// Increase the size of a disk inode
@@ -182,5 +188,93 @@ impl Inode {
             }
         });
         block_cache_sync_all();
+    }
+
+    /// Get the number of links of a given inode
+    pub fn nlink(&self, inode: &Arc<Inode>) -> i32 {
+        let fs = self.fs.lock();
+        let mut nlink = 0;
+        self.read_disk_inode(|root_inode| {
+            assert!(root_inode.is_dir());
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    root_inode.read_at(
+                        DIRENT_SZ * i,
+                        dirent.as_bytes_mut(),
+                        &self.block_device
+                    ),
+                    DIRENT_SZ,
+                );
+                let (block_id, block_off) = fs.get_disk_inode_pos(dirent.inode_id());
+                if block_id == inode.block_id as u32 && block_off == inode.block_offset {
+                    nlink += 1;
+                }
+            }
+        });
+        return nlink;
+    }
+
+    /// Duplicate a given inode under current inode by name
+    pub fn duplicate(&self, name: &str, inode_id: u32) -> Option<Arc<Inode>> {
+        let mut fs = self.fs.lock();
+        self.alloc_dir_entry(name, inode_id, &mut fs);
+        let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
+        // return inode
+        Some(Arc::new(Self::new(
+            block_id,
+            block_offset,
+            self.fs.clone(),
+            self.block_device.clone()
+        )))
+    }
+    /// Remove a file from current inode by name
+    pub fn dealloc_dir_entry(&self, name: &str) -> Option<u32> {
+        self.modify_disk_inode(|root_inode| {
+            assert!(root_inode.is_dir());
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    root_inode.read_at(
+                        DIRENT_SZ * i,
+                        dirent.as_bytes_mut(),
+                        &self.block_device
+                    ),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    root_inode.write_at(
+                        DIRENT_SZ * i,
+                        DirEntry::empty().as_bytes(),
+                        &self.block_device
+                    );
+                    return Some(dirent.inode_id());
+                }
+            }
+            None
+        })
+    }
+
+    fn alloc_dir_entry(&self,
+                        name: &str,
+                        inode_id: u32,
+                        fs: &mut MutexGuard<EasyFileSystem>) {
+        self.modify_disk_inode(|root_inode| {
+            assert!(root_inode.is_dir());
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            // increase size
+            self.increase_size(new_size as u32, root_inode, fs);
+            // write dirent
+            let dirent = DirEntry::new(name, inode_id);
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device
+            );
+        });
     }
 }

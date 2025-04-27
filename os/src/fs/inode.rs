@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use bitflags::*;
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
+use crate::fs::StatMode;
 
 /// inode in memory
 /// A wrapper around a filesystem inode
@@ -56,6 +57,7 @@ impl OSInode {
 }
 
 lazy_static! {
+    /// The root inode of the file system
     pub static ref ROOT_INODE: Arc<Inode> = {
         let efs = EasyFileSystem::open(BLOCK_DEVICE.clone());
         Arc::new(EasyFileSystem::root_inode(&efs))
@@ -156,4 +158,28 @@ impl File for OSInode {
         }
         total_write_size
     }
+    fn stat(&self, stat: &mut super::Stat) {
+        let inner = self.inner.exclusive_access();
+        let inode: Arc<Inode> = inner.inode.clone();
+        stat.set_empty();
+        inode.read_disk_inode(|disk_inode| {
+            stat.mode = if disk_inode.is_dir() { StatMode::DIR } else { StatMode::FILE };
+            stat.nlink = ROOT_INODE.nlink(&inode) as u32;
+        });
+    }
+}
+
+/// Find the file id by name
+pub fn find_file_id(name: &str) -> Option<u32> {
+    ROOT_INODE.get_inode_id(name)
+}
+/// Create a new file and return its id
+pub fn link_file(name: &str, old_file_id: u32) -> Option<Arc<OSInode>> {
+    ROOT_INODE.duplicate(name, old_file_id).map(|inode| {
+        Arc::new(OSInode::new(false, false, inode))
+    })
+}
+/// Unlink a file by name
+pub fn unlink_file(name: &str) -> bool {
+    ROOT_INODE.dealloc_dir_entry(name).is_some()
 }
