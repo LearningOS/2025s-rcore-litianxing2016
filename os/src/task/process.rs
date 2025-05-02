@@ -49,6 +49,126 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+
+    pub deadlock_detect: bool,
+    pub banker: Banker,
+}
+#[repr(usize)] 
+/// LockType
+pub enum LockType {
+    /// Mutex
+    Mutex = 0,
+    /// Semaphore
+    Semaphore = 1,
+}
+impl From<LockType> for usize {
+    fn from(lock: LockType) -> Self {
+        lock as usize
+    }
+}
+/// Banker
+pub struct Banker {
+    /// available resources
+    pub available: [Vec<isize>; 2],
+    /// allocated resources
+    pub allocated: [Vec<Vec<isize>>; 2],
+    /// remaining need resources
+    pub remain_need: [Vec<Vec<isize>>; 2],
+}
+
+impl Banker {
+    /// new
+    pub fn new() -> Self {
+        Banker {
+            available: [Vec::new(), Vec::new()],
+            allocated: [vec![vec![]], vec![vec![]]],
+            remain_need: [vec![vec![]], vec![vec![]]],
+        }
+
+    }
+    /// allocate resource
+    pub fn init_new_task(new_task_tid: usize) -> impl FnMut(&mut ProcessControlBlockInner, &Arc<TaskControlBlock>) {
+        use crate::task::process::LockType::Mutex;
+        use crate::task::process::LockType::Semaphore;
+        move |process_inner, new_task| {
+            let res_counts = [
+                process_inner.banker.available[Mutex as usize].len(),
+                process_inner.banker.available[Semaphore as usize].len(),
+            ];
+            let tasks = &mut process_inner.tasks;
+            while tasks.len() < new_task_tid + 1 {
+                tasks.push(None);
+                process_inner.banker.allocated[Mutex as usize].push(vec![0; res_counts[Mutex as usize]]);
+                process_inner.banker.remain_need[Mutex as usize].push(vec![0; res_counts[Mutex as usize]]);
+                process_inner.banker.allocated[Semaphore as usize].push(vec![0; res_counts[Semaphore as usize]]);
+                process_inner.banker.remain_need[Semaphore as usize].push(vec![0; res_counts[Semaphore as usize]]);
+            }
+            tasks[new_task_tid] = Some(Arc::clone(&new_task));
+            process_inner.banker.allocated[Mutex as usize][new_task_tid].iter_mut().for_each(|x| *x=0);
+            process_inner.banker.allocated[Semaphore as usize][new_task_tid].iter_mut().for_each(|x| *x=0);
+            process_inner.banker.remain_need[Mutex as usize][new_task_tid].iter_mut().for_each(|x| *x=0);
+            process_inner.banker.remain_need[Semaphore as usize][new_task_tid].iter_mut().for_each(|x| *x=0);
+        }
+    }
+    /// deallocate resource
+    pub fn create_resource(&mut self, lock_type: LockType, res_count: usize) {
+        let index = lock_type as usize;
+        self.available[index].push(res_count as isize);
+        self.allocated[index].iter_mut().for_each(|x| x.push(0));
+        self.remain_need[index].iter_mut().for_each(|x| x.push(0));
+    }
+    /// deallocate resource
+    pub fn init_resource(&mut self, lock_type: LockType, id: usize, res_count: usize) {
+        let index = lock_type as usize;
+        self.available[index][id] = res_count as isize;
+        self.allocated[index].iter_mut().for_each(|x| x[id] = 0);
+        self.remain_need[index].iter_mut().for_each(|x| x[id] = 0);
+    }
+    
+    /// deallocate resource
+    pub fn alloc_resource(&mut self, lock_type: LockType, tid: usize, mutex_id: usize) {
+        let index = lock_type as usize;
+        self.available[index][mutex_id] -= 1;
+        self.allocated[index][tid][mutex_id] += 1;
+        self.remain_need[index][tid][mutex_id] -= 1;
+    }
+    /// deallocate resource
+    pub fn dealloc_resource(&mut self, lock_type: LockType, tid: usize, mutex_id: usize) {
+        let index = lock_type as usize;
+        self.available[index][mutex_id] += 1;
+        self.allocated[index][tid][mutex_id] -= 1;
+    }
+
+    /// deallocate resource
+    pub fn deadlock_detect(&mut self, lock_type: LockType) -> bool {
+        let index = lock_type as usize;
+        let mut _available = self.available[index].clone();
+        let mut finish = vec![false; self.allocated[index].len()];
+        let mut unfinished: Vec<usize> = (0..self.remain_need[index].len()).filter(|&i| !finish[i]).collect();
+        while !unfinished.is_empty() {
+            let pre_len = unfinished.len();
+            unfinished.retain(|&i| { // 裁切未完成列表
+                let (task_need, task_alloc) = (&self.remain_need[index][i], &self.allocated[index][i]);
+                // 检查是否有资源可用
+                if task_need.iter().zip(&_available).all(|(n, a)| n <= a) {
+                    // 释放资源到可用资源池
+                    for (a, &alloc) in _available.iter_mut().zip(task_alloc) {
+                        *a += alloc;
+                    }
+                    finish[i] = true;
+                    false   // 移出未完成列表
+                } else {
+                    true    // 保留在未完成列表
+                }
+            });
+            // 提前退出：如果列表长度未变化说明本轮无进展
+            if pre_len == unfinished.len() {
+                break;
+            }
+        }
+        // 存在未完成的任务则表示死锁
+        finish.iter().any(|&f| !f)
+    }
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +239,8 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: false,
+                    banker: Banker::new(),
                 })
             },
         });
@@ -245,6 +367,8 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detect: false,
+                    banker: Banker::new(),
                 })
             },
         });
